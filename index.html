@@ -1,0 +1,404 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+   <meta charset="UTF-8">
+   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+   <title>KMeans Clustering Algorithm</title>
+   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/bulma/0.9.3/css/bulma.min.css">
+   <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+   <style>
+       #plot {
+           width: 100%;
+           height: 100%;
+           border: 1px solid lightgray;
+       }
+
+
+       .container {
+           max-width: 800px;
+           margin: 0 auto;
+           display: flex;
+           flex-direction: column;
+           align-items: center; /* Center items horizontally */
+       }
+
+
+       .field {
+           width: 100%; /* Allow fields to take full width */
+           display: flex;
+           justify-content: center; /* Center contents of each field */
+           margin-bottom: 1rem; /* Add some space between fields */
+       }
+
+
+       .button {
+           width: 100%; /* Make buttons full width */
+           max-width: 200px; /* Optional: set a max width for buttons */
+       }
+   </style>
+</head>
+<body>
+   <section class="section">
+       <div class="container">
+           <h1 class="title">KMeans Clustering Algorithm</h1>
+
+
+           <div class="field">
+               <label class="label">Number of Clusters (k):</label>
+               <div class="control">
+                   <input class="input" type="number" id="num_clusters" value="3">
+               </div>
+           </div>
+
+
+           <div class="field">
+               <label class="label">Initialization Method:</label>
+               <div class="control">
+                   <div class="select">
+                       <select id="init_method">
+                           <option value="random">Random</option>
+                           <option value="farthest_first">Farthest First</option>
+                           <option value="kmeans++">KMeans++</option>
+                           <option value="manual">Manual</option>
+                       </select>
+                   </div>
+               </div>
+           </div>
+
+
+           <!-- Centered Buttons -->
+           <div class="field">
+               <button id="step-btn" class="button is-primary" onclick="stepKMeans()">Step Through KMeans</button>
+           </div>
+
+
+           <div class="field">
+               <button class="button is-link" onclick="runToConvergence()">Run to Convergence</button>
+           </div>
+
+
+           <div class="field">
+               <button class="button is-info" onclick="generateNewDataset()">Generate New Dataset</button>
+           </div>
+
+
+           <div class="field">
+               <button class="button is-danger" onclick="resetAlgorithm()">Reset Algorithm</button>
+           </div>
+
+
+           <!-- Chart Container -->
+           <div class="box" id="plot_container" style="width: 100%; height: 400px;">
+               <canvas id="plot"></canvas>
+           </div>
+       </div>
+   </section>
+
+
+   <script>
+       let chart;
+       let datasetPoints = [];
+       let kmeans_state = null;
+       let manualCentroids = [];
+       let isManualSelection = false;
+
+
+       function initializePlot() {
+            const ctx = document.getElementById('plot').getContext('2d');
+            chart = new Chart(ctx, {
+                type: 'scatter',
+                data: {
+                    datasets: [
+                        {
+                            label: 'Data Points',
+                            data: datasetPoints,
+                            borderColor: 'rgba(150, 75, 0, 0.8)',
+                            backgroundColor: function(context) {
+                                const idx = context.dataIndex;
+                                if (kmeans_state && kmeans_state.assignments) {
+                                    const cluster = kmeans_state.assignments[idx];
+                                    const clusterColors = ['#800000', '#FF6347', '#FFB6C1', '#FFD700'];
+                                    return clusterColors[cluster % clusterColors.length];
+                                }
+                                return 'rgba(150, 75, 0, 0.5)';
+                            },
+                            pointRadius: 4,
+                            showInLegend: false
+                        },
+                        {
+                            label: 'Centroids',
+                            data: [],
+                            borderColor: 'rgba(255, 0, 0, 1)',
+                            backgroundColor: 'rgba(255, 0, 0, 1)',
+                            pointRadius: 8,
+                            pointStyle: 'cross', // Use 'cross' for a cross shape
+                            pointBorderWidth: 5
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        x: {
+                            type: 'linear',
+                            position: 'center',
+                            min: -40,
+                            max: 40,
+                        },
+                        y: {
+                            type: 'linear',
+                            position: 'center',
+                            min: -40,
+                            max: 40,
+                        }
+                    },
+                    plugins: {
+                        legend: {
+                            display: true,
+                            labels: {
+                                usePointStyle: true, // Use point style for legend items
+                                filter: function(legendItem) {
+                                    return legendItem.text !== 'Data Points'; // Exclude Data Points from legend
+                                }
+                            },
+                            position: 'top',
+                        }
+                    },
+                    onClick: handleCanvasClick
+                }
+            });
+        }
+
+
+       function updateChart() {
+   // Update dataset and centroids to reflect new kmeans state
+        chart.data.datasets[0].data = datasetPoints;
+        
+        if (kmeans_state) {
+            chart.data.datasets[1].data = kmeans_state.centroids.map(point => ({ x: point[0], y: point[1] }));
+            // Update point colors based on cluster assignment
+            chart.data.datasets[0].backgroundColor = function(context) {
+                const idx = context.dataIndex;
+                if (kmeans_state && kmeans_state.assignments) {
+                    const cluster = kmeans_state.assignments[idx];
+                    const clusterColors = ['#800000', '#FF6347', '#FFB6C1', '#FFD700'];
+                    return clusterColors[cluster % clusterColors.length];
+                }
+                return 'rgba(150, 75, 0, 0.5)';
+            };
+        } else {
+            chart.data.datasets[1].data = [];
+        }
+
+
+        chart.update(); // Update chart to reflect changes
+        }
+
+
+
+
+       function handleCanvasClick(event, elements) {
+           if (!isManualSelection) return;
+
+
+           const canvasPosition = Chart.helpers.getRelativePosition(event, chart);
+           const xValue = chart.scales.x.getValueForPixel(canvasPosition.x);
+           const yValue = chart.scales.y.getValueForPixel(canvasPosition.y);
+
+
+           manualCentroids.push([xValue, yValue]);
+
+
+           // Update chart with new centroid
+           chart.data.datasets[1].data.push({x: xValue, y: yValue});
+          
+           const k = parseInt(document.getElementById('num_clusters').value);
+          
+           if (manualCentroids.length === k) {
+               isManualSelection = false;
+              
+               // Update the chart immediately
+               chart.update();
+              
+               // Use setTimeout to show the alert after a short delay
+               setTimeout(() => {
+                   alert('All centroids have been selected. You can now step through or run to convergence.');
+               }, 50);
+           } else {
+               // If we haven't selected all centroids yet, just update the chart
+               chart.update();
+           }
+       }
+
+
+       function loadData() {
+           axios.get('/generate').then(response => {
+               const data = response.data;
+               datasetPoints = data.dataset.map(point => ({ x: point[0], y: point[1] }));
+               updateChart();
+           }).catch(error => {
+               console.error('Error loading dataset:', error);
+           });
+       }
+
+
+
+
+       function stepKMeans() {
+           const k = document.getElementById('num_clusters').value;
+           const init_method = document.getElementById('init_method').value;
+
+
+           if (init_method === 'manual') {
+               if (manualCentroids.length === 0) {
+                   isManualSelection = true;
+                   alert('Please click on the graph to select initial centroids');
+                   return;
+               }
+               if (manualCentroids.length < k) {
+                   alert(`Please select ${k - manualCentroids.length} more centroid(s)`);
+                   return;
+               }
+           }
+
+
+           let endpoint = '/step';
+           let data = { k: k, init_method: init_method };
+
+
+           if (init_method === 'manual' && !kmeans_state) {
+               endpoint = '/set_manual_centroids';
+               data = { centroids: manualCentroids };
+           }
+
+
+           axios.post(endpoint, data).then(response => {
+               kmeans_state = response.data;
+               updateChart();
+               if (kmeans_state.converged) {
+                   setTimeout(() => {
+                       alert('KMeans has converged!');
+                   }, 100);
+               }
+           }).catch(error => {
+               console.error('Error in KMeans step:', error);
+           });
+       }
+
+
+       async function runToConvergence() {
+           const k = document.getElementById('num_clusters').value;
+           const init_method = document.getElementById('init_method').value;
+
+
+           if (init_method === 'manual') {
+               if (manualCentroids.length === 0) {
+                   isManualSelection = true;
+                   alert('Please click on the graph to select initial centroids');
+                   return;
+               }
+               if (manualCentroids.length < k) {
+                   alert(`Please select ${k - manualCentroids.length} more centroid(s)`);
+                   return;
+               }
+           }
+
+
+           if (kmeans_state && kmeans_state.converged) {
+               alert('KMeans has already converged!');
+               return;
+           }
+
+
+           let endpoint = '/run';
+           let data = { k: k, init_method: init_method };
+
+
+           if (init_method === 'manual' && !kmeans_state) {
+               endpoint = '/set_manual_centroids_and_run';
+               data = { centroids: manualCentroids };
+           }
+
+
+           document.querySelector('button.is-link').disabled = true;
+
+
+           try {
+               const response = await axios.post(endpoint, data);
+               kmeans_state = response.data;
+
+
+               // Update the chart with the final converged state
+               updateChart();
+
+
+               // Wait for rendering to complete
+               await new Promise(resolve => setTimeout(resolve, 300));
+
+
+               // Confirm no further changes
+               chart.update();
+
+
+               // Wait again to ensure stability
+               await new Promise(resolve => setTimeout(resolve, 300));
+
+
+               alert('KMeans has converged!');
+
+
+           } catch (error) {
+               console.error('Error running KMeans to convergence:', error);
+           } finally {
+               document.querySelector('button.is-link').disabled = false;
+           }
+       }
+
+
+
+
+       function generateNewDataset() {
+           loadData();
+           resetAlgorithm();
+       }
+
+
+       function resetAlgorithm() {
+           axios.post('/reset').then(response => {
+               kmeans_state = null;
+               manualCentroids = [];
+               isManualSelection = false;
+               updateChart();
+           }).catch(error => {
+               console.error('Error resetting algorithm:', error);
+           });
+       }
+
+
+       function handleInitMethodChange() {
+           const init_method = document.getElementById('init_method').value;
+           if (init_method === 'manual') {
+               isManualSelection = true;
+               manualCentroids = [];
+               chart.data.datasets[1].data = [];
+               chart.update();
+               alert('Please click on the graph to select initial centroids');
+           } else {
+               isManualSelection = false;
+               manualCentroids = [];
+               chart.data.datasets[1].data = [];
+               chart.update();
+           }
+       }
+
+
+       window.onload = function() {
+           initializePlot();
+           loadData();
+           document.getElementById('init_method').addEventListener('change', handleInitMethodChange);
+       };
+   </script>
+</body>
+</html>
