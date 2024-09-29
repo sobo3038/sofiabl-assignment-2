@@ -26,8 +26,9 @@ jobs:
       
       - name: Run Flask server
         run: |
-          make run &           
-          sleep 10             
+          make run &
+          sleep 20  # Increase sleep time to 20 seconds
+            
 
       - name: Verify Flask server
         run: curl --fail http://localhost:3000 || exit 1
