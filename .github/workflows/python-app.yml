@@ -19,16 +19,18 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
-      
+          python-version: '3.12.6'
+
       - name: Install dependencies
         run: make install
       
+      - name: Check Flask installation
+        run: flask --version
+      
       - name: Run Flask server
         run: |
-          make run &
-          sleep 20  # Increase sleep time to 20 seconds
-            
+          make run &           # Start the Flask server in the background
+          sleep 20             # Wait for 20 seconds to ensure the server starts
 
       - name: Verify Flask server
         run: curl --fail http://localhost:3000 || exit 1
