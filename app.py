@@ -71,5 +71,6 @@ def set_manual_centroids_and_run():
     
     return jsonify(kmeans.get_plot_data())
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     app.run(host='0.0.0.0', port=3000)
+
